@@ -732,6 +732,12 @@ export const jaJPMessages = {
   "history.detail.tabs.tanked": "被ダメージ",
   "history.detail.tabs.healing": "回復",
   "history.detail.tabs.death": "死亡リプレイ",
+  "history.detail.tabs.vitals": "HP / 靭性",
+  "history.detail.bossVitals.title": "HP と靭性",
+  "history.detail.bossVitals.hp": "HP",
+  "history.detail.bossVitals.toughness": "靭性",
+  "history.detail.bossVitals.empty":
+    "このエンカウントには HP / 靭性の記録がありません。",
   "history.detail.actions.backToHistory": "履歴に戻る",
   "history.detail.actions.openWebsiteTitle":
     "resonance-logs.com でこのエンカウントを開く",

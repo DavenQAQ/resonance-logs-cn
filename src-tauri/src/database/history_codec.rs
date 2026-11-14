@@ -211,6 +211,21 @@ pub struct HistoryBuff {
     pub expires_offset_ms: Option<u64>,
 }
 
+/// One boss vitals sample persisted alongside the combat journal.
+///
+/// `hp`/`stun` are the raw values; the UI derives percentages from the
+/// matching maxima so phase changes and toughness scaling stay correct.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryCurveSample {
+    pub entity_id: i64,
+    pub monster_id: Option<i32>,
+    pub hp: i64,
+    pub hp_max: i64,
+    pub stun: i64,
+    pub stun_max: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 pub enum HistoryEvent {
@@ -219,13 +234,14 @@ pub enum HistoryEvent {
     EntityContext(HistoryEntityContext),
     Death(HistoryDeath),
     Buff(HistoryBuff),
+    Curve(HistoryCurveSample),
 }
 
 impl HistoryEvent {
     pub const fn stream_kind(&self) -> HistoryStream {
         match self {
             Self::Hit(_) | Self::Death(_) => HistoryStream::Combat,
-            Self::SkillCast(_) | Self::Buff(_) => HistoryStream::Timeline,
+            Self::SkillCast(_) | Self::Buff(_) | Self::Curve(_) => HistoryStream::Timeline,
             Self::EntityContext(_) => HistoryStream::Context,
         }
     }
@@ -240,6 +256,7 @@ impl HistoryEvent {
             Self::Buff(_) => 96,
             Self::Death(death) => estimated_death_size(death),
             Self::EntityContext(context) => 96 + context.name.as_ref().map_or(0, String::len),
+            Self::Curve(_) => 80,
         }
     }
 }

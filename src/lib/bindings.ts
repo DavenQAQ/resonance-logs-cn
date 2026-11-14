@@ -826,6 +826,7 @@ count: number;
  */
 detectedAtMs: number }
 export type EffectSlotConfig = { slotId: number; threshold: number | null; resetBuffId: number; resetSourceConfigId?: number | null; resetBuffTarget?: ResetBuffTarget; onBuffAdd?: CounterAction; onBuffChange?: CounterAction; onBuffRemove?: CounterAction; freezeDurationMs?: number | null; onFreezeExpire?: CounterAction; altFreeze?: AltFreezeConfig | null; thresholdModifier?: AttrModifier | null; freezeDurationModifier?: AttrModifier | null; resetSkillKeys?: number[] | null; onResetSkill?: CounterAction; wrapAtThreshold?: boolean; resetPassiveSkillIds?: number[] | null; onPassiveSkill?: CounterAction; dungeonStartFreezeMs?: number | null }
+export type EncounterBossCurveData = { entityId: string; monsterId: number | null; points: EncounterCurvePoint[] }
 export type EncounterBuffGraceData = { offsetMs: number; creditedMs: number }
 export type EncounterBuffLaneData = { entityId: string; baseId: number;
 /**
@@ -852,6 +853,7 @@ activeSpans?: EncounterBuffSpanData[];
  * First-hit / post-inactivity credits for the denominator.
  */
 gracePoints?: EncounterBuffGraceData[]; lanes: EncounterBuffLaneData[] }
+export type EncounterCurvePoint = { offsetMs: number; hp: number; hpMax: number; stun: number; stunMax: number }
 /**
  * Per-entity damage hit stream: columnar (offset_ms, amount) pairs ordered
  * by time. Recomputed from raw chunks at query time; never persisted.
@@ -872,7 +874,12 @@ damageHits?: EncounterDamageHitsData[]; markers: EncounterMarkerData[];
  * Always recomputed from chunks on load; `None` for encounters recorded
  * before buff timeline persistence existed.
  */
-buffTimeline?: EncounterBuffTimelineData | null }
+buffTimeline?: EncounterBuffTimelineData | null;
+/**
+ * Always recomputed from chunks on load; empty for encounters recorded
+ * before the boss vitals curve existed.
+ */
+bossCurves?: EncounterBossCurveData[] }
 export type EncounterEntityData = { entityId: string; displayUid: number; name: string | null; classId: number | null; classSpec: number | null;
 /**
  * Resolved spec display name; `None` for monsters / unknown specs.

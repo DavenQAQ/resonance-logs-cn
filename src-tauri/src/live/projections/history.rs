@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use crate::database::event_journal::RecordingEncounter;
 use crate::database::history_codec::{
-    HistoryBuff, HistoryDeath, HistoryEntityContext, HistoryEnvelope, HistoryEvent, HistoryHit,
-    HistorySkillCast,
+    HistoryBuff, HistoryCurveSample, HistoryDeath, HistoryEntityContext, HistoryEnvelope,
+    HistoryEvent, HistoryHit, HistorySkillCast,
 };
 use crate::database::history_query::{HistoryQualityFlag, quality_flags_to_bits};
 use crate::live::history_writer::{HistoryFinalization, HistoryWriterHandle};
@@ -90,6 +90,8 @@ impl HistoryProjection {
         if !self.accepts(envelope) {
             return Ok(());
         }
+
+        self.maybe_record_curve(envelope, entities, segment_offset_ms)?;
 
         match &envelope.event {
             DomainEvent::DeathOccurred {
@@ -238,13 +240,60 @@ impl HistoryProjection {
         Ok(())
     }
 
+    /// Records the current target's HP / toughness whenever one of the four
+    /// attributes changes. This reuses the existing attribute event cadence:
+    /// no timer, no extra sampling loop, and no change to the segment bounds.
+    fn maybe_record_curve(
+        &mut self,
+        envelope: &DomainEnvelope,
+        entities: &EntityContext,
+        segment_offset_ms: u64,
+    ) -> Result<(), String> {
+        let DomainEvent::AttributeChanged {
+            entity, attr_id, ..
+        } = &envelope.event
+        else {
+            return Ok(());
+        };
+        if !matches!(
+            *attr_id,
+            attr_type::ATTR_CURRENT_HP
+                | attr_type::ATTR_MAX_HP
+                | attr_type::ATTR_CURRENT_STUNNED
+                | attr_type::ATTR_MAX_STUNNED
+        ) {
+            return Ok(());
+        }
+        if entities.current_attack_target() != Some(*entity) {
+            return Ok(());
+        }
+        let Some(state) = entities.entity(entity.uuid) else {
+            return Ok(());
+        };
+        let hp_max = state.int_attr(attr_type::ATTR_MAX_HP).unwrap_or(0);
+        if hp_max <= 0 {
+            return Ok(());
+        }
+        self.persist(
+            segment_offset_ms,
+            HistoryEvent::Curve(HistoryCurveSample {
+                entity_id: entity.uuid.0,
+                monster_id: state.identity.monster_id,
+                hp: state.int_attr(attr_type::ATTR_CURRENT_HP).unwrap_or(0),
+                hp_max,
+                stun: state.int_attr(attr_type::ATTR_CURRENT_STUNNED).unwrap_or(0),
+                stun_max: state.int_attr(attr_type::ATTR_MAX_STUNNED).unwrap_or(0),
+            }),
+            false,
+        )
+    }
+
     fn record_context(
         &mut self,
         entity_id: i64,
         entities: &EntityContext,
         segment_offset_ms: u64,
-    ) -> Result<(), String> {
-        let Some(state) = entities.entity(EntityUuid(entity_id)) else {
+    ) -> Result<(), String> {        let Some(state) = entities.entity(EntityUuid(entity_id)) else {
             self.add_quality(HistoryQualityFlag::MissingEntityContext);
             return Ok(());
         };

@@ -758,6 +758,12 @@ export const enUSMessages = {
   "history.detail.tabs.tanked": "Damage Taken",
   "history.detail.tabs.healing": "Healing",
   "history.detail.tabs.death": "Death Replay",
+  "history.detail.tabs.vitals": "HP / Toughness",
+  "history.detail.bossVitals.title": "HP & Toughness",
+  "history.detail.bossVitals.hp": "HP",
+  "history.detail.bossVitals.toughness": "Toughness",
+  "history.detail.bossVitals.empty":
+    "No HP / toughness samples were recorded for this encounter.",
   "history.detail.actions.backToHistory": "Back to history",
   "history.detail.actions.openWebsiteTitle":
     "Open this encounter on resonance-logs.com",

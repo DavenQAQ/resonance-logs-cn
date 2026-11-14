@@ -687,6 +687,11 @@ export const zhCNMessages = {
   "history.detail.tabs.tanked": "承伤",
   "history.detail.tabs.healing": "治疗",
   "history.detail.tabs.death": "死亡回放",
+  "history.detail.tabs.vitals": "血量 / 韧性",
+  "history.detail.bossVitals.title": "血量与韧性",
+  "history.detail.bossVitals.hp": "血量",
+  "history.detail.bossVitals.toughness": "韧性",
+  "history.detail.bossVitals.empty": "这场战斗没有记录血量 / 韧性数据。",
   "history.detail.actions.backToHistory": "返回历史",
   "history.detail.actions.openWebsiteTitle":
     "在 resonance-logs.com 打开该战斗记录",

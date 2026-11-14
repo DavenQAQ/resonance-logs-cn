@@ -217,6 +217,24 @@ pub struct EncounterBuffTimelineData {
     pub lanes: Vec<EncounterBuffLaneData>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EncounterCurvePoint {
+    pub offset_ms: u64,
+    pub hp: i64,
+    pub hp_max: i64,
+    pub stun: i64,
+    pub stun_max: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EncounterBossCurveData {
+    pub entity_id: String,
+    pub monster_id: Option<i32>,
+    pub points: Vec<EncounterCurvePoint>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct EncounterDetailData {
@@ -236,6 +254,10 @@ pub struct EncounterDetailData {
     /// before buff timeline persistence existed.
     #[serde(default)]
     pub buff_timeline: Option<EncounterBuffTimelineData>,
+    /// Always recomputed from chunks on load; empty for encounters recorded
+    /// before the boss vitals curve existed.
+    #[serde(default)]
+    pub boss_curves: Vec<EncounterBossCurveData>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -318,6 +340,9 @@ pub struct HistoryProjectionReducer {
     /// Buff presence edges as (offset, sequence, record). Edges before the
     /// range are kept for state seeding and clamped at merge time.
     buff_edges: Vec<(u64, u64, HistoryBuff)>,
+    /// Boss HP / toughness samples keyed by entity id, in replay order.
+    boss_curves: BTreeMap<i64, Vec<EncounterCurvePoint>>,
+    boss_curve_monster_ids: BTreeMap<i64, Option<i32>>,
 }
 
 impl HistoryProjectionReducer {
@@ -342,6 +367,8 @@ impl HistoryProjectionReducer {
             markers: Vec::new(),
             player_damage_hits: Vec::new(),
             buff_edges: Vec::new(),
+            boss_curves: BTreeMap::new(),
+            boss_curve_monster_ids: BTreeMap::new(),
         })
     }
 
@@ -453,6 +480,22 @@ impl HistoryProjectionReducer {
                         replay: death.replay.as_ref().map(DeathRecord::from),
                     });
             }
+            HistoryEvent::Curve(sample) if self.collect_dynamic_series => {
+                self.boss_curves
+                    .entry(sample.entity_id)
+                    .or_default()
+                    .push(EncounterCurvePoint {
+                        offset_ms: envelope.offset_ms,
+                        hp: sample.hp,
+                        hp_max: sample.hp_max,
+                        stun: sample.stun,
+                        stun_max: sample.stun_max,
+                    });
+                self.boss_curve_monster_ids
+                    .entry(sample.entity_id)
+                    .or_insert(sample.monster_id);
+            }
+            HistoryEvent::Curve(_) => {}
             HistoryEvent::EntityContext(_) | HistoryEvent::Buff(_) => {}
         }
     }
@@ -480,6 +523,7 @@ impl HistoryProjectionReducer {
         detail.damage_hits.clear();
         detail.markers.clear();
         detail.buff_timeline = None;
+        detail.boss_curves.clear();
         DetailProjectionSnapshot {
             last_sequence: self.last_sequence,
             contexts: self.contexts,
@@ -495,10 +539,15 @@ impl HistoryProjectionReducer {
     fn finish_range_with_buff(
         mut self,
         encounter_id: i32,
-    ) -> (EncounterRangeData, Option<EncounterBuffTimelineData>) {
+    ) -> (
+        EncounterRangeData,
+        Option<EncounterBuffTimelineData>,
+        Vec<EncounterBossCurveData>,
+    ) {
         let combat = std::mem::take(&mut self.combat);
         let detail = self.build_detail(encounter_id, empty_summary(encounter_id), &combat);
         let buff_timeline = detail.buff_timeline;
+        let boss_curves = detail.boss_curves;
         let range = EncounterRangeData {
             encounter_id: detail.encounter_id,
             quality_flags: detail.quality_flags,
@@ -509,7 +558,7 @@ impl HistoryProjectionReducer {
             damage_hits: detail.damage_hits,
             markers: detail.markers,
         };
-        (range, buff_timeline)
+        (range, buff_timeline, boss_curves)
     }
 
     fn build_detail(
@@ -644,6 +693,19 @@ impl HistoryProjectionReducer {
                 .then_with(|| left.sequence.cmp(&right.sequence))
         });
 
+        let monster_ids = std::mem::take(&mut self.boss_curve_monster_ids);
+        let boss_curves = std::mem::take(&mut self.boss_curves)
+            .into_iter()
+            .map(|(entity_id, mut points)| {
+                points.sort_by_key(|point| point.offset_ms);
+                EncounterBossCurveData {
+                    entity_id: entity_id.to_string(),
+                    monster_id: monster_ids.get(&entity_id).copied().flatten(),
+                    points,
+                }
+            })
+            .collect();
+
         let buff_timeline = build_buff_timeline(
             &self.range,
             std::mem::take(&mut self.player_damage_hits),
@@ -666,6 +728,7 @@ impl HistoryProjectionReducer {
             },
             entities,
             damage_hits,
+            boss_curves,
             markers: std::mem::take(&mut self.markers),
             buff_timeline,
         }
@@ -1136,7 +1199,7 @@ pub fn project_encounter_detail(
     };
     let snapshot = decode_detail_projection(&stored.data)?;
     let quality_flags = validate_projection_metadata(&descriptor, &stored, &snapshot)?;
-    let (range, buff_timeline) = replay_chunks(
+    let (range, buff_timeline, boss_curves) = replay_chunks(
         summary.id,
         quality_flags,
         &snapshot,
@@ -1145,7 +1208,12 @@ pub fn project_encounter_detail(
         timeline_end_ms_exclusive,
         true,
     )?;
-    Ok(detail_from_range(summary, range, buff_timeline))
+    Ok(detail_from_range(
+        summary,
+        range,
+        buff_timeline,
+        boss_curves,
+    ))
 }
 
 /// Replay only chunks intersecting the requested half-open range.
@@ -1185,7 +1253,7 @@ pub fn project_encounter_range(
         end_ms_exclusive,
         false,
     )
-    .map(|(range, _)| range)
+    .map(|(range, _, _)| range)
 }
 
 fn replay_chunks(
@@ -1196,7 +1264,14 @@ fn replay_chunks(
     start_ms: u64,
     end_ms_exclusive: u64,
     collect_damage_hits: bool,
-) -> Result<(EncounterRangeData, Option<EncounterBuffTimelineData>), HistoryQueryError> {
+) -> Result<
+    (
+        EncounterRangeData,
+        Option<EncounterBuffTimelineData>,
+        Vec<EncounterBossCurveData>,
+    ),
+    HistoryQueryError,
+> {
     let mut reducer = HistoryProjectionReducer::new(start_ms..end_ms_exclusive)?
         .with_seeded_contexts_only()
         .with_damage_hits(collect_damage_hits);
@@ -1334,6 +1409,7 @@ fn unavailable_detail(summary: EncounterSummaryDto, quality_flags: i32) -> Encou
         damage_hits: Vec::new(),
         markers: Vec::new(),
         buff_timeline: None,
+        boss_curves: Vec::new(),
     }
 }
 
@@ -1341,6 +1417,7 @@ fn detail_from_range(
     summary: EncounterSummaryDto,
     range: EncounterRangeData,
     buff_timeline: Option<EncounterBuffTimelineData>,
+    boss_curves: Vec<EncounterBossCurveData>,
 ) -> EncounterDetailData {
     EncounterDetailData {
         encounter_id: range.encounter_id,
@@ -1354,6 +1431,7 @@ fn detail_from_range(
         damage_hits: range.damage_hits,
         markers: range.markers,
         buff_timeline,
+        boss_curves,
     }
 }
 
@@ -1690,7 +1768,7 @@ mod tests {
             range.end,
             false,
         )
-        .map(|(range, _)| range)
+        .map(|(range, _, _)| range)
         .expect("replay range")
     }
 
@@ -1722,7 +1800,7 @@ mod tests {
         let mut snapshot = seed.finish_detail(1, empty_summary(1));
         snapshot.last_sequence = 3;
 
-        let (range, _) = replay_chunks(
+        let (range, _, _) = replay_chunks(
             1,
             0,
             &snapshot,
@@ -2395,7 +2473,7 @@ mod tests {
         assert!(detail.markers.is_empty());
 
         let decoded = decode_detail_projection(&stored.data).expect("decode snapshot");
-        let (full, _) =
+        let (full, _, _) =
             replay_chunks(1, 0, &decoded, &chunks, 0, 3_000, false).expect("full range");
         assert_eq!(full.totals.healing, "40");
         assert_eq!(full.markers.len(), 1);

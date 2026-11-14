@@ -377,6 +377,46 @@ export function historyDamageHits(
   }));
 }
 
+/** One boss's HP / toughness curves as percentages of their maxima. */
+export type BossVitalsSeries = {
+  entityId: string;
+  monsterId: number | null;
+  /** `[offsetMs, percent]` pairs. */
+  hp: [number, number][];
+  /** `[offsetMs, percent]` pairs; empty when the boss has no toughness gauge. */
+  toughness: [number, number][];
+};
+
+/**
+ * Convert persisted boss vitals samples into percentage series for the
+ * history detail chart. A zero maximum skips that series (bosses recorded
+ * before toughness was captured keep their HP curve).
+ */
+export function bossVitalsSeries(
+  detail: EncounterDetailData,
+): BossVitalsSeries[] {
+  return (detail.bossCurves ?? [])
+    .map((curve) => {
+      const hp: [number, number][] = [];
+      const toughness: [number, number][] = [];
+      for (const point of curve.points) {
+        if (point.hpMax > 0) {
+          hp.push([point.offsetMs, (point.hp / point.hpMax) * 100]);
+        }
+        if (point.stunMax > 0) {
+          toughness.push([point.offsetMs, (point.stun / point.stunMax) * 100]);
+        }
+      }
+      return {
+        entityId: curve.entityId,
+        monsterId: curve.monsterId,
+        hp,
+        toughness,
+      };
+    })
+    .filter((series) => series.hp.length > 0);
+}
+
 /**
  * Merged per-player row covering all three metrics, matching the column keys
  * of the history player tables (`historyDpsPlayerColumns` & friends).

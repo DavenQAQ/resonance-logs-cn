@@ -9,6 +9,7 @@
   import EncounterTimelineChart, {
     type TimelineEventDisplay,
   } from "$lib/components/encounter-timeline/encounter-timeline-chart.svelte";
+  import BossVitalsChart from "$lib/components/encounter-timeline/boss-vitals-chart.svelte";
   import type {
     EncounterChart,
     EncounterTimelineEvent,
@@ -25,6 +26,7 @@
   import { resolveBuffDisplayName } from "$lib/config/buff-name-table";
   import { getGlobalBuffAliases } from "$lib/settings-store";
   import {
+    bossVitalsSeries,
     buildHistoryPlayerRows,
     historyBuffCoverageByKey,
     historyBuffTimeline,
@@ -62,7 +64,7 @@
   import { SvelteMap, SvelteURLSearchParams } from "svelte/reactivity";
   import { toast } from "svelte-sonner";
 
-  type HistoryTab = "damage" | "tanked" | "healing" | "death";
+  type HistoryTab = "damage" | "tanked" | "healing" | "death" | "vitals";
   type HistorySkillType = "dps" | "heal" | "tanked" | "death";
   type DetailState =
     | { kind: "loading" }
@@ -79,6 +81,7 @@
     { key: "tanked", labelKey: "history.detail.tabs.tanked" },
     { key: "healing", labelKey: "history.detail.tabs.healing" },
     { key: "death", labelKey: "history.detail.tabs.death" },
+    { key: "vitals", labelKey: "history.detail.tabs.vitals" },
   ];
 
   const encounterId = $derived.by(() => {
@@ -126,6 +129,7 @@
     detailState.kind === "ready" ? detailState.data : null,
   );
   const encounter = $derived(detail?.summary ?? null);
+  const bossVitals = $derived(detail ? bossVitalsSeries(detail) : []);
   const activeRange = $derived.by(() => {
     if (!selectedRange || rangeState.kind !== "ready") return null;
     return rangeState.data.startMs === selectedRange[0] &&
@@ -1020,6 +1024,21 @@
             emptyMessage={t("history.detail.death.empty")}
             variant="history"
           />
+        {:else if activeTab === "vitals"}
+          <h2 class="text-foreground mb-2 text-sm font-medium">
+            {t("history.detail.bossVitals.title")}
+          </h2>
+          {#if bossVitals.length > 0}
+            <BossVitalsChart
+              series={bossVitals}
+              startMs={detail?.startMs ?? 0}
+              endMs={detail?.endMsExclusive ?? Math.max(1, activeDurationMs)}
+            />
+          {:else}
+            <p class="text-muted-foreground text-sm">
+              {t("history.detail.bossVitals.empty")}
+            </p>
+          {/if}
         {:else}
           <HistoryPlayerTable
             rows={displayedPlayers}
@@ -1042,7 +1061,7 @@
           />
         {/if}
 
-        {#if buffTimelineView && buffTimelineView.lanes.length > 0}
+        {#if activeTab !== "vitals" && buffTimelineView && buffTimelineView.lanes.length > 0}
           <section class="mt-5">
             <BuffCoverageTable
               view={buffTimelineView}
@@ -1052,7 +1071,7 @@
               bind:open={SETTINGS.historyView.state.coverageTableOpen}
             />
           </section>
-        {:else if chart && !buffTimelineView}
+        {:else if activeTab !== "vitals" && chart && !buffTimelineView}
           <p class="text-muted-foreground mt-5 text-[11px]">
             {t("history.buffCoverage.unavailable")}
           </p>

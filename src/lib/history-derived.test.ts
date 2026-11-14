@@ -14,6 +14,7 @@ import { computePlayerRows } from "$lib/live-derived";
 import { RESONANCE_SKILLS } from "$lib/skill-mappings";
 import {
   aggregateMetricStats,
+  bossVitalsSeries,
   buildHistoryPlayerRows,
   historyBuffCoverageByKey,
   historyBuffLaneKey,
@@ -251,6 +252,50 @@ describe("historyDamageHits", () => {
 
   it("returns an empty array for missing hits", () => {
     expect(historyDamageHits(undefined)).toEqual([]);
+  });
+});
+
+describe("bossVitalsSeries", () => {
+  it("converts HP and toughness samples to percentages", () => {
+    const series = bossVitalsSeries(
+      detail({
+        bossCurves: [
+          {
+            entityId: "boss-1",
+            monsterId: 1704000,
+            points: [
+              { offsetMs: 0, hp: 100, hpMax: 100, stun: 50, stunMax: 100 },
+              { offsetMs: 1000, hp: 40, hpMax: 100, stun: 0, stunMax: 100 },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(series).toHaveLength(1);
+    expect(series[0]?.hp).toEqual([
+      [0, 100],
+      [1000, 40],
+    ]);
+    expect(series[0]?.toughness).toEqual([
+      [0, 50],
+      [1000, 0],
+    ]);
+  });
+
+  it("skips a missing toughness gauge but keeps HP", () => {
+    const series = bossVitalsSeries(
+      detail({
+        bossCurves: [
+          {
+            entityId: "boss-2",
+            monsterId: null,
+            points: [{ offsetMs: 0, hp: 10, hpMax: 20, stun: 0, stunMax: 0 }],
+          },
+        ],
+      }),
+    );
+    expect(series[0]?.hp).toEqual([[0, 50]]);
+    expect(series[0]?.toughness).toEqual([]);
   });
 });
 
