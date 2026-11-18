@@ -9,7 +9,7 @@
   import EncounterTimelineChart, {
     type TimelineEventDisplay,
   } from "$lib/components/encounter-timeline/encounter-timeline-chart.svelte";
-  import BossVitalsChart from "$lib/components/encounter-timeline/boss-vitals-chart.svelte";
+  import EntityToughnessPanel from "$lib/components/encounter-timeline/entity-toughness-panel.svelte";
   import type {
     EncounterChart,
     EncounterTimelineEvent,
@@ -26,7 +26,6 @@
   import { resolveBuffDisplayName } from "$lib/config/buff-name-table";
   import { getGlobalBuffAliases } from "$lib/settings-store";
   import {
-    bossVitalsSeries,
     buildHistoryPlayerRows,
     historyBuffCoverageByKey,
     historyBuffTimeline,
@@ -129,7 +128,6 @@
     detailState.kind === "ready" ? detailState.data : null,
   );
   const encounter = $derived(detail?.summary ?? null);
-  const bossVitals = $derived(detail ? bossVitalsSeries(detail) : []);
   const activeRange = $derived.by(() => {
     if (!selectedRange || rangeState.kind !== "ready") return null;
     return rangeState.data.startMs === selectedRange[0] &&
@@ -1025,15 +1023,8 @@
             variant="history"
           />
         {:else if activeTab === "vitals"}
-          <h2 class="text-foreground mb-2 text-sm font-medium">
-            {t("history.detail.bossVitals.title")}
-          </h2>
-          {#if bossVitals.length > 0}
-            <BossVitalsChart
-              series={bossVitals}
-              startMs={detail?.startMs ?? 0}
-              endMs={detail?.endMsExclusive ?? Math.max(1, activeDurationMs)}
-            />
+          {#if detail}
+            <EntityToughnessPanel {detail} />
           {:else}
             <p class="text-muted-foreground text-sm">
               {t("history.detail.bossVitals.empty")}

@@ -20,7 +20,8 @@ use crate::database::schema as sch;
 use self::event_journal::{FinalizeEncounter, FinalizeOutcome, InsertOutcome, RecordingEncounter};
 use self::history_codec::EncodedHistoryChunk;
 use self::history_query::{
-    EncounterDetailData, EncounterDetailQuery, EncounterRangeData, EncounterRangeQuery,
+    EncounterCurveData, EncounterDetailData, EncounterDetailQuery, EncounterRangeData,
+    EncounterRangeQuery,
 };
 
 pub const MIGRATIONS: EmbeddedMigrations = diesel_migrations::embed_migrations!();
@@ -400,6 +401,21 @@ pub fn load_history_range(
         reply,
     })?;
     history_query::project_encounter_range(query, start_ms, end_ms_exclusive)
+        .map_err(|error| error.to_string())
+}
+
+/// Load only the requested entities' vitals directly from timeline chunks.
+/// Kept separate from `load_history_detail` so a trash pull with dozens of
+/// mobs does not inflate the detail payload.
+pub fn load_history_curves(
+    encounter_id: i32,
+    entity_ids: Vec<String>,
+) -> Result<Vec<EncounterCurveData>, String> {
+    let chunks = db_exec(move |conn| {
+        event_journal::load_chunks_for_range(conn, encounter_id, 0, i64::MAX as u64)
+            .map_err(|error| error.to_string())
+    })?;
+    history_query::project_encounter_curves(&chunks, &entity_ids)
         .map_err(|error| error.to_string())
 }
 

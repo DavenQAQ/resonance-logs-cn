@@ -738,6 +738,12 @@ export const jaJPMessages = {
   "history.detail.bossVitals.toughness": "靭性",
   "history.detail.bossVitals.empty":
     "このエンカウントには HP / 靭性の記録がありません。",
+  "history.detail.bossVitals.selectAll": "すべて選択",
+  "history.detail.bossVitals.clearAll": "選択を解除",
+  "history.detail.bossVitals.showHp": "HP も表示",
+  "history.detail.bossVitals.selectPrompt":
+    "左のモンスターを選択すると靭性カーブを表示します。",
+  "history.detail.bossVitals.loading": "読み込み中…",
   "history.detail.actions.backToHistory": "履歴に戻る",
   "history.detail.actions.openWebsiteTitle":
     "resonance-logs.com でこのエンカウントを開く",

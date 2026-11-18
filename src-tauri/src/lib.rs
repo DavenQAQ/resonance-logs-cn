@@ -90,6 +90,7 @@ fn api_builder() -> Builder<tauri::Wry> {
         database::commands::search_history_players,
         database::commands::get_recent_encounters_filtered,
         database::commands::get_encounter_detail,
+        database::commands::get_encounter_curves,
         database::commands::get_encounter_range,
         database::commands::delete_encounter,
         database::commands::delete_encounters,

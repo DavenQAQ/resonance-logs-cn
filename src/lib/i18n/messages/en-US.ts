@@ -764,6 +764,12 @@ export const enUSMessages = {
   "history.detail.bossVitals.toughness": "Toughness",
   "history.detail.bossVitals.empty":
     "No HP / toughness samples were recorded for this encounter.",
+  "history.detail.bossVitals.selectAll": "Select all",
+  "history.detail.bossVitals.clearAll": "Clear all",
+  "history.detail.bossVitals.showHp": "Also show HP",
+  "history.detail.bossVitals.selectPrompt":
+    "Select a monster on the left to view its toughness curve.",
+  "history.detail.bossVitals.loading": "Loading…",
   "history.detail.actions.backToHistory": "Back to history",
   "history.detail.actions.openWebsiteTitle":
     "Open this encounter on resonance-logs.com",

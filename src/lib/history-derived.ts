@@ -9,6 +9,7 @@
 import type {
   DeathRecord,
   EncounterBuffTimelineData,
+  EncounterCurveData,
   EncounterDamageHitsData,
   EncounterDetailData,
   EncounterEntityData,
@@ -377,25 +378,24 @@ export function historyDamageHits(
   }));
 }
 
-/** One boss's HP / toughness curves as percentages of their maxima. */
-export type BossVitalsSeries = {
+/** One entity's HP / toughness curves as percentages of their maxima. */
+export type EntityVitalsSeries = {
   entityId: string;
   monsterId: number | null;
   /** `[offsetMs, percent]` pairs. */
   hp: [number, number][];
-  /** `[offsetMs, percent]` pairs; empty when the boss has no toughness gauge. */
+  /** `[offsetMs, percent]` pairs; empty when the entity has no toughness gauge. */
   toughness: [number, number][];
 };
 
 /**
- * Convert persisted boss vitals samples into percentage series for the
- * history detail chart. A zero maximum skips that series (bosses recorded
- * before toughness was captured keep their HP curve).
+ * Convert lazily loaded entity vitals samples into percentage series for the
+ * history detail chart. A zero maximum skips that series.
  */
-export function bossVitalsSeries(
-  detail: EncounterDetailData,
-): BossVitalsSeries[] {
-  return (detail.bossCurves ?? [])
+export function entityCurvesToSeries(
+  curves: EncounterCurveData[],
+): EntityVitalsSeries[] {
+  return curves
     .map((curve) => {
       const hp: [number, number][] = [];
       const toughness: [number, number][] = [];
@@ -414,7 +414,7 @@ export function bossVitalsSeries(
         toughness,
       };
     })
-    .filter((series) => series.hp.length > 0);
+    .filter((series) => series.hp.length > 0 || series.toughness.length > 0);
 }
 
 /**

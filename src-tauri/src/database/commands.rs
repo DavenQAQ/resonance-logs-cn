@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::database::PlayerNameEntry;
 use crate::database::db_exec;
-use crate::database::history_query::{EncounterDetailData, EncounterRangeData};
+use crate::database::history_query::{
+    EncounterCurveData, EncounterDetailData, EncounterRangeData,
+};
 use crate::database::schema as sch;
 use crate::live::history_writer::HistoryWriterHandle;
 
@@ -690,6 +692,22 @@ pub async fn get_encounter_detail(
     })
     .await
     .map_err(|error| format!("encounter detail worker failed: {error}"))?
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_encounter_curves(
+    encounter_id: i32,
+    entity_ids: Vec<String>,
+    history_writer: tauri::State<'_, HistoryWriterHandle>,
+) -> Result<Vec<EncounterCurveData>, String> {
+    let history_writer = history_writer.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        history_writer.fence()?;
+        crate::database::load_history_curves(encounter_id, entity_ids)
+    })
+    .await
+    .map_err(|error| format!("encounter curves worker failed: {error}"))?
 }
 
 #[tauri::command]

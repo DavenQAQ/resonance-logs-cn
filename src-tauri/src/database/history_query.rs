@@ -25,7 +25,8 @@ use super::event_journal::{
 };
 use super::history_codec::{
     HistoryBuff, HistoryBuffEdge, HistoryCastKind, HistoryChunkDocument, HistoryCodecError,
-    HistoryEntityContext, HistoryEnvelope, HistoryEvent, HistoryMetric, decode_history_chunk,
+    HistoryEntityContext, HistoryEnvelope, HistoryEvent, HistoryMetric, HistoryStream,
+    decode_history_chunk,
 };
 
 const KNOWN_QUALITY_FLAGS: i32 = (1 << 3) - 1;
@@ -229,7 +230,15 @@ pub struct EncounterCurvePoint {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct EncounterBossCurveData {
+pub struct EncounterCurveIndex {
+    pub entity_id: String,
+    pub monster_id: Option<i32>,
+    pub point_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EncounterCurveData {
     pub entity_id: String,
     pub monster_id: Option<i32>,
     pub points: Vec<EncounterCurvePoint>,
@@ -255,9 +264,9 @@ pub struct EncounterDetailData {
     #[serde(default)]
     pub buff_timeline: Option<EncounterBuffTimelineData>,
     /// Always recomputed from chunks on load; empty for encounters recorded
-    /// before the boss vitals curve existed.
+    /// before entity vitals curves existed.
     #[serde(default)]
-    pub boss_curves: Vec<EncounterBossCurveData>,
+    pub curve_index: Vec<EncounterCurveIndex>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -274,6 +283,11 @@ pub struct EncounterRangeData {
     #[serde(default)]
     pub damage_hits: Vec<EncounterDamageHitsData>,
     pub markers: Vec<EncounterMarkerData>,
+    /// Carried from the detail reducer so the detail path can expose the
+    /// per-entity index without loading every point. Range recounts carry it
+    /// too, but do not render it.
+    #[serde(default)]
+    pub curve_index: Vec<EncounterCurveIndex>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,7 +354,7 @@ pub struct HistoryProjectionReducer {
     /// Buff presence edges as (offset, sequence, record). Edges before the
     /// range are kept for state seeding and clamped at merge time.
     buff_edges: Vec<(u64, u64, HistoryBuff)>,
-    /// Boss HP / toughness samples keyed by entity id, in replay order.
+    /// Entity HP / toughness samples keyed by entity id, in replay order.
     boss_curves: BTreeMap<i64, Vec<EncounterCurvePoint>>,
     boss_curve_monster_ids: BTreeMap<i64, Option<i32>>,
 }
@@ -523,7 +537,7 @@ impl HistoryProjectionReducer {
         detail.damage_hits.clear();
         detail.markers.clear();
         detail.buff_timeline = None;
-        detail.boss_curves.clear();
+        detail.curve_index.clear();
         DetailProjectionSnapshot {
             last_sequence: self.last_sequence,
             contexts: self.contexts,
@@ -539,15 +553,10 @@ impl HistoryProjectionReducer {
     fn finish_range_with_buff(
         mut self,
         encounter_id: i32,
-    ) -> (
-        EncounterRangeData,
-        Option<EncounterBuffTimelineData>,
-        Vec<EncounterBossCurveData>,
-    ) {
+    ) -> (EncounterRangeData, Option<EncounterBuffTimelineData>) {
         let combat = std::mem::take(&mut self.combat);
         let detail = self.build_detail(encounter_id, empty_summary(encounter_id), &combat);
         let buff_timeline = detail.buff_timeline;
-        let boss_curves = detail.boss_curves;
         let range = EncounterRangeData {
             encounter_id: detail.encounter_id,
             quality_flags: detail.quality_flags,
@@ -557,8 +566,9 @@ impl HistoryProjectionReducer {
             entities: detail.entities,
             damage_hits: detail.damage_hits,
             markers: detail.markers,
+            curve_index: detail.curve_index,
         };
-        (range, buff_timeline, boss_curves)
+        (range, buff_timeline)
     }
 
     fn build_detail(
@@ -693,16 +703,17 @@ impl HistoryProjectionReducer {
                 .then_with(|| left.sequence.cmp(&right.sequence))
         });
 
-        let monster_ids = std::mem::take(&mut self.boss_curve_monster_ids);
-        let boss_curves = std::mem::take(&mut self.boss_curves)
-            .into_iter()
-            .map(|(entity_id, mut points)| {
-                points.sort_by_key(|point| point.offset_ms);
-                EncounterBossCurveData {
-                    entity_id: entity_id.to_string(),
-                    monster_id: monster_ids.get(&entity_id).copied().flatten(),
-                    points,
-                }
+        let curve_index = self
+            .boss_curves
+            .iter()
+            .map(|(entity_id, points)| EncounterCurveIndex {
+                entity_id: entity_id.to_string(),
+                monster_id: self
+                    .boss_curve_monster_ids
+                    .get(entity_id)
+                    .copied()
+                    .flatten(),
+                point_count: u32::try_from(points.len()).unwrap_or(u32::MAX),
             })
             .collect();
 
@@ -728,7 +739,7 @@ impl HistoryProjectionReducer {
             },
             entities,
             damage_hits,
-            boss_curves,
+            curve_index,
             markers: std::mem::take(&mut self.markers),
             buff_timeline,
         }
@@ -1199,7 +1210,7 @@ pub fn project_encounter_detail(
     };
     let snapshot = decode_detail_projection(&stored.data)?;
     let quality_flags = validate_projection_metadata(&descriptor, &stored, &snapshot)?;
-    let (range, buff_timeline, boss_curves) = replay_chunks(
+    let (range, buff_timeline) = replay_chunks(
         summary.id,
         quality_flags,
         &snapshot,
@@ -1208,12 +1219,7 @@ pub fn project_encounter_detail(
         timeline_end_ms_exclusive,
         true,
     )?;
-    Ok(detail_from_range(
-        summary,
-        range,
-        buff_timeline,
-        boss_curves,
-    ))
+    Ok(detail_from_range(summary, range, buff_timeline))
 }
 
 /// Replay only chunks intersecting the requested half-open range.
@@ -1253,7 +1259,64 @@ pub fn project_encounter_range(
         end_ms_exclusive,
         false,
     )
-    .map(|(range, _, _)| range)
+    .map(|(range, _)| range)
+}
+
+/// Extract lazily requested vitals series directly from timeline chunks.
+/// This intentionally skips projection replay: the history page only needs
+/// the raw curve points, and a trash pull can contain dozens of entities.
+pub fn project_encounter_curves(
+    chunks: &[StoredHistoryChunk],
+    entity_ids: &[String],
+) -> Result<Vec<EncounterCurveData>, HistoryQueryError> {
+    let filter: Option<std::collections::HashSet<i64>> = if entity_ids.is_empty() {
+        None
+    } else {
+        Some(
+            entity_ids
+                .iter()
+                .filter_map(|entity_id| entity_id.parse::<i64>().ok())
+                .collect(),
+        )
+    };
+    let mut grouped: BTreeMap<i64, (Option<i32>, Vec<EncounterCurvePoint>)> = BTreeMap::new();
+    for chunk in chunks {
+        if chunk.stream_kind != HistoryStream::Timeline {
+            continue;
+        }
+        let document = decode_history_chunk(&chunk.data, chunk.stream_kind)?;
+        for envelope in document.envelopes() {
+            let HistoryEvent::Curve(sample) = envelope.event else {
+                continue;
+            };
+            if let Some(ids) = filter.as_ref()
+                && !ids.contains(&sample.entity_id)
+            {
+                continue;
+            }
+            let entry = grouped
+                .entry(sample.entity_id)
+                .or_insert((sample.monster_id, Vec::new()));
+            entry.1.push(EncounterCurvePoint {
+                offset_ms: envelope.offset_ms,
+                hp: sample.hp,
+                hp_max: sample.hp_max,
+                stun: sample.stun,
+                stun_max: sample.stun_max,
+            });
+        }
+    }
+    Ok(grouped
+        .into_iter()
+        .map(|(entity_id, (monster_id, mut points))| {
+            points.sort_by_key(|point| point.offset_ms);
+            EncounterCurveData {
+                entity_id: entity_id.to_string(),
+                monster_id,
+                points,
+            }
+        })
+        .collect())
 }
 
 fn replay_chunks(
@@ -1268,7 +1331,6 @@ fn replay_chunks(
     (
         EncounterRangeData,
         Option<EncounterBuffTimelineData>,
-        Vec<EncounterBossCurveData>,
     ),
     HistoryQueryError,
 > {
@@ -1409,7 +1471,7 @@ fn unavailable_detail(summary: EncounterSummaryDto, quality_flags: i32) -> Encou
         damage_hits: Vec::new(),
         markers: Vec::new(),
         buff_timeline: None,
-        boss_curves: Vec::new(),
+        curve_index: Vec::new(),
     }
 }
 
@@ -1417,7 +1479,6 @@ fn detail_from_range(
     summary: EncounterSummaryDto,
     range: EncounterRangeData,
     buff_timeline: Option<EncounterBuffTimelineData>,
-    boss_curves: Vec<EncounterBossCurveData>,
 ) -> EncounterDetailData {
     EncounterDetailData {
         encounter_id: range.encounter_id,
@@ -1431,7 +1492,7 @@ fn detail_from_range(
         damage_hits: range.damage_hits,
         markers: range.markers,
         buff_timeline,
-        boss_curves,
+        curve_index: range.curve_index,
     }
 }
 
@@ -1461,7 +1522,8 @@ fn empty_summary(encounter_id: i32) -> EncounterSummaryDto {
 mod tests {
     use super::*;
     use crate::database::history_codec::{
-        HistoryDeath, HistoryHit, HistorySkillCast, HistoryStream, encode_history_chunk,
+        HistoryCurveSample, HistoryDeath, HistoryHit, HistorySkillCast, HistoryStream,
+        encode_history_chunk,
     };
     use crate::live::projections::combat::accumulator::CombatHitFlags;
     use crate::live::projections::death::{
@@ -1717,6 +1779,53 @@ mod tests {
         }
     }
 
+    #[test]
+    fn lazy_curves_group_and_filter_entities() {
+        let chunks = vec![stored_chunk(
+            1,
+            HistoryStream::Timeline,
+            0,
+            vec![
+                HistoryEnvelope {
+                    sequence: 1,
+                    offset_ms: 0,
+                    event: HistoryEvent::Curve(HistoryCurveSample {
+                        entity_id: 10,
+                        monster_id: Some(100),
+                        hp: 90,
+                        hp_max: 100,
+                        stun: 50,
+                        stun_max: 100,
+                    }),
+                },
+                HistoryEnvelope {
+                    sequence: 2,
+                    offset_ms: 250,
+                    event: HistoryEvent::Curve(HistoryCurveSample {
+                        entity_id: 20,
+                        monster_id: Some(200),
+                        hp: 80,
+                        hp_max: 100,
+                        stun: 25,
+                        stun_max: 100,
+                    }),
+                },
+            ],
+        )];
+
+        let all = project_encounter_curves(&chunks, &[]).expect("all curves");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].entity_id, "10");
+        assert_eq!(all[1].entity_id, "20");
+        assert_eq!(all[1].points[0].offset_ms, 250);
+
+        let filtered =
+            project_encounter_curves(&chunks, &["20".to_string()]).expect("filtered curves");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].entity_id, "20");
+        assert_eq!(filtered[0].monster_id, Some(200));
+    }
+
     fn context_at(sequence: u64, offset_ms: u64, name: &str) -> HistoryEnvelope {
         HistoryEnvelope {
             sequence,
@@ -1768,7 +1877,7 @@ mod tests {
             range.end,
             false,
         )
-        .map(|(range, _, _)| range)
+        .map(|(range, _)| range)
         .expect("replay range")
     }
 
@@ -1800,7 +1909,7 @@ mod tests {
         let mut snapshot = seed.finish_detail(1, empty_summary(1));
         snapshot.last_sequence = 3;
 
-        let (range, _, _) = replay_chunks(
+        let (range, _) = replay_chunks(
             1,
             0,
             &snapshot,
@@ -2473,7 +2582,7 @@ mod tests {
         assert!(detail.markers.is_empty());
 
         let decoded = decode_detail_projection(&stored.data).expect("decode snapshot");
-        let (full, _, _) =
+        let (full, _) =
             replay_chunks(1, 0, &decoded, &chunks, 0, 3_000, false).expect("full range");
         assert_eq!(full.totals.healing, "40");
         assert_eq!(full.markers.len(), 1);

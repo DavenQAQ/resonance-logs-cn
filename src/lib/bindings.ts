@@ -224,6 +224,14 @@ async getEncounterDetail(encounterId: number) : Promise<Result<EncounterDetailDa
     else return { status: "error", error: e  as any };
 }
 },
+async getEncounterCurves(encounterId: number, entityIds: string[]) : Promise<Result<EncounterCurveData[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("get_encounter_curves", { encounterId, entityIds }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getEncounterRange(encounterId: number, startMs: number, endMs: number) : Promise<Result<EncounterRangeData, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_encounter_range", { encounterId, startMs, endMs }) };
@@ -826,7 +834,6 @@ count: number;
  */
 detectedAtMs: number }
 export type EffectSlotConfig = { slotId: number; threshold: number | null; resetBuffId: number; resetSourceConfigId?: number | null; resetBuffTarget?: ResetBuffTarget; onBuffAdd?: CounterAction; onBuffChange?: CounterAction; onBuffRemove?: CounterAction; freezeDurationMs?: number | null; onFreezeExpire?: CounterAction; altFreeze?: AltFreezeConfig | null; thresholdModifier?: AttrModifier | null; freezeDurationModifier?: AttrModifier | null; resetSkillKeys?: number[] | null; onResetSkill?: CounterAction; wrapAtThreshold?: boolean; resetPassiveSkillIds?: number[] | null; onPassiveSkill?: CounterAction; dungeonStartFreezeMs?: number | null }
-export type EncounterBossCurveData = { entityId: string; monsterId: number | null; points: EncounterCurvePoint[] }
 export type EncounterBuffGraceData = { offsetMs: number; creditedMs: number }
 export type EncounterBuffLaneData = { entityId: string; baseId: number;
 /**
@@ -853,6 +860,8 @@ activeSpans?: EncounterBuffSpanData[];
  * First-hit / post-inactivity credits for the denominator.
  */
 gracePoints?: EncounterBuffGraceData[]; lanes: EncounterBuffLaneData[] }
+export type EncounterCurveData = { entityId: string; monsterId: number | null; points: EncounterCurvePoint[] }
+export type EncounterCurveIndex = { entityId: string; monsterId: number | null; pointCount: number }
 export type EncounterCurvePoint = { offsetMs: number; hp: number; hpMax: number; stun: number; stunMax: number }
 /**
  * Per-entity damage hit stream: columnar (offset_ms, amount) pairs ordered
@@ -877,9 +886,9 @@ damageHits?: EncounterDamageHitsData[]; markers: EncounterMarkerData[];
 buffTimeline?: EncounterBuffTimelineData | null;
 /**
  * Always recomputed from chunks on load; empty for encounters recorded
- * before the boss vitals curve existed.
+ * before entity vitals curves existed.
  */
-bossCurves?: EncounterBossCurveData[] }
+curveIndex?: EncounterCurveIndex[] }
 export type EncounterEntityData = { entityId: string; displayUid: number; name: string | null; classId: number | null; classSpec: number | null;
 /**
  * Resolved spec display name; `None` for monsters / unknown specs.
@@ -902,7 +911,13 @@ export type EncounterRangeData = { encounterId: number; qualityFlags: HistoryQua
  * Populated only on the detail path (which shares the range reducer
  * drain); range recounts leave it empty since they render no curves.
  */
-damageHits?: EncounterDamageHitsData[]; markers: EncounterMarkerData[] }
+damageHits?: EncounterDamageHitsData[]; markers: EncounterMarkerData[];
+/**
+ * Carried from the detail reducer so the detail path can expose the
+ * per-entity index without loading every point. Range recounts carry it
+ * too, but do not render it.
+ */
+curveIndex?: EncounterCurveIndex[] }
 export type EncounterSkillData = { skillId: string; metric: HistoryMetric; property: number | null; damageMode: number | null; stats: EncounterStatsData }
 export type EncounterSourceBreakdownData = { sourceMonsterId: number | null; stats: EncounterStatsData; skills: EncounterSkillData[] }
 export type EncounterStatsData = { total: string; effectiveTotal: string; hits: string; criticalHits: string; criticalTotal: string; luckyHits: string; luckyTotal: string; triggerHits: string; blockedHits: string; luckyBlockHits: string; extrema?: RawHitExtrema | null }

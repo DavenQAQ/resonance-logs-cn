@@ -692,6 +692,12 @@ export const zhCNMessages = {
   "history.detail.bossVitals.hp": "血量",
   "history.detail.bossVitals.toughness": "韧性",
   "history.detail.bossVitals.empty": "这场战斗没有记录血量 / 韧性数据。",
+  "history.detail.bossVitals.selectAll": "全选",
+  "history.detail.bossVitals.clearAll": "全不选",
+  "history.detail.bossVitals.showHp": "同时显示血量",
+  "history.detail.bossVitals.selectPrompt":
+    "勾选左侧怪物查看韧性曲线。",
+  "history.detail.bossVitals.loading": "加载中…",
   "history.detail.actions.backToHistory": "返回历史",
   "history.detail.actions.openWebsiteTitle":
     "在 resonance-logs.com 打开该战斗记录",

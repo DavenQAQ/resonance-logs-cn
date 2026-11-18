@@ -1,6 +1,6 @@
 //! Explicit DomainEvent to stable HistoryEvent projection.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::database::event_journal::RecordingEncounter;
 use crate::database::history_codec::{
@@ -28,6 +28,10 @@ struct ActiveHistoryProjection {
 pub struct HistoryProjection {
     writer: HistoryWriterHandle,
     active: Option<ActiveHistoryProjection>,
+    /// Per-entity throttle for vitals samples. Full encounter coverage, but
+    /// at most one point every 200ms per entity.
+    last_curve_at: HashMap<i64, u64>,
+    last_curve_sample: HashMap<i64, HistoryCurveSample>,
 }
 
 impl HistoryProjection {
@@ -35,6 +39,8 @@ impl HistoryProjection {
         Self {
             writer,
             active: None,
+            last_curve_at: HashMap::new(),
+            last_curve_sample: HashMap::new(),
         }
     }
 
@@ -47,6 +53,8 @@ impl HistoryProjection {
             .map_err(|error| error.to_string())?
             .without_dynamic_series();
         self.writer.begin(segment_id, recording)?;
+        self.last_curve_at.clear();
+        self.last_curve_sample.clear();
         self.active = Some(ActiveHistoryProjection {
             segment_id,
             next_sequence: 0,
@@ -240,9 +248,11 @@ impl HistoryProjection {
         Ok(())
     }
 
-    /// Records the current target's HP / toughness whenever one of the four
-    /// attributes changes. This reuses the existing attribute event cadence:
-    /// no timer, no extra sampling loop, and no change to the segment bounds.
+    /// Records HP / toughness for every monster with a toughness gauge.
+    /// This is full encounter coverage, not just the current target, but each
+    /// entity is throttled to one point per 200ms and duplicate values are
+    /// skipped. It reuses the existing attribute event cadence: no timer, no
+    /// extra sampling loop, and no change to the segment bounds.
     fn maybe_record_curve(
         &mut self,
         envelope: &DomainEnvelope,
@@ -264,28 +274,46 @@ impl HistoryProjection {
         ) {
             return Ok(());
         }
-        if entities.current_attack_target() != Some(*entity) {
-            return Ok(());
-        }
         let Some(state) = entities.entity(entity.uuid) else {
             return Ok(());
         };
+        // Only monsters with a toughness gauge; this excludes players and
+        // mobs that never show a break bar.
+        if state.identity.monster_id.is_none() {
+            return Ok(());
+        }
         let hp_max = state.int_attr(attr_type::ATTR_MAX_HP).unwrap_or(0);
-        if hp_max <= 0 {
+        let stun_max = state
+            .int_attr(attr_type::ATTR_MAX_STUNNED)
+            .unwrap_or(0);
+        if hp_max <= 0 || stun_max <= 0 {
+            return Ok(());
+        }
+        let sample = HistoryCurveSample {
+            entity_id: entity.uuid.0,
+            monster_id: state.identity.monster_id,
+            hp: state.int_attr(attr_type::ATTR_CURRENT_HP).unwrap_or(0),
+            hp_max,
+            stun: state.int_attr(attr_type::ATTR_CURRENT_STUNNED).unwrap_or(0),
+            stun_max,
+        };
+        let now_ms = envelope.meta.mono_ms().0;
+        if let Some(previous_ms) = self.last_curve_at.get(&entity.uuid.0)
+            && now_ms.saturating_sub(*previous_ms) < 200
+        {
+            return Ok(());
+        }
+        if self.last_curve_sample.get(&entity.uuid.0) == Some(&sample) {
             return Ok(());
         }
         self.persist(
             segment_offset_ms,
-            HistoryEvent::Curve(HistoryCurveSample {
-                entity_id: entity.uuid.0,
-                monster_id: state.identity.monster_id,
-                hp: state.int_attr(attr_type::ATTR_CURRENT_HP).unwrap_or(0),
-                hp_max,
-                stun: state.int_attr(attr_type::ATTR_CURRENT_STUNNED).unwrap_or(0),
-                stun_max: state.int_attr(attr_type::ATTR_MAX_STUNNED).unwrap_or(0),
-            }),
+            HistoryEvent::Curve(sample.clone()),
             false,
-        )
+        )?;
+        self.last_curve_at.insert(entity.uuid.0, now_ms);
+        self.last_curve_sample.insert(entity.uuid.0, sample);
+        Ok(())
     }
 
     fn record_context(
